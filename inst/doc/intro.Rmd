@@ -1,0 +1,92 @@
+---
+title: "Introduction to SA23204173 package"
+author: "Tianhao Wang"
+date: "2023-12-8"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to SA23204173 package}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r}
+  library(SA23204173)
+  library(microbenchmark)
+```
+
+## Background
+
+Kim et al. (2009) first proposed the $\ell_1$ trend filtering model, expressed as follows:
+
+$$
+\min _{\boldsymbol{\alpha} \in \mathbb{R}^n} \frac{1}{2}\|\boldsymbol{y}-\boldsymbol{\alpha}\|_2^2+\lambda\left\|\boldsymbol{D}^{(2)} \boldsymbol{\alpha}\right\|_{\ell_1}
+$$
+
+where $\boldsymbol{D}^{(2)}$ is the difference matrix. More generally, we can consider $\boldsymbol{D}^{(q+1)}$, where $q$ is the order. The DiffMat function in the R package defines an $(n-q-1) \times n$ matrix, each row of which has only $q+2$ non-zero items defined by binomial coefficients. Wen et al. (2023) used the $\ell_0$ penalty term instead of the $\ell_1$ penalty term, resulting in the following LO trend filtering problem:
+
+$$
+\min _{\boldsymbol{\alpha} \in \mathbb{R}^n} \frac{1}{2}\|\boldsymbol{y}-\boldsymbol{\alpha}\|_2^2+\lambda\left\|\boldsymbol{D}^{(q+1)} \boldsymbol{\alpha}\right\|_{\ell_0}
+$$
+In the article, Wen proposed the alternating minimization induced active set (AMIAS) method to solve the $\ell_0$ trend filtering problem. This method starts from the dual problem and obtains the estimated trend of interest, $\hat{\alpha}$. This method can be directly called using the R package AMIAS. The method is also replicated in this package, provided by the functions l0tfAMIASR.
+
+
+This package also presents another approach, transforming the $\ell_0$ trend filtering problem into a sparse $\ell_0$ regression problem through matrix transformation. By constructing a lower triangular matrix $\mathrm{X}$ related to $\boldsymbol{D}^{(q+1)}$ (where X is provided by the function DiffMatrix), we can transform the above $\ell_0$ regression problem into the following form:
+$$
+\min _{\boldsymbol{\beta} \in \mathbb{R}^n} \frac{1}{2}\|\boldsymbol{y}-X \boldsymbol{\beta}\|_2^2+\lambda \sum_{i=q+2}^n\left|\boldsymbol{\beta}_i\right| .
+$$
+
+Specifically, this is an $n \times n$ square matrix. We can try to solve this $\ell_0$ regression problem using the idea of the adaptive best subset selection (ABESS) algorithm, provided by the functions l0tfABESSC and l0tfABESSR.
+
+
+
+## Introduction
+
+Whether using the AMIAS algorithm or the ABESS algorithm, both involve a large number of iterations and matrix operations. Here, we consider using Rcpp functions (provided by the solveEquation function) to simplify the matrix operations in each step of the iteration. This is the difference between l0tfABESSR and l0tfABESSC.
+
+Next, we introduce two functions for generating simulated data: SimuBlocks and SimuWave. They generate piecewise constant and piecewise linear data, respectively, which are the primary types of data handled by the trend filtering model, as represented in the following figure:
+
+```{r}
+  data1 <- SimuBlocks(200,sigma=0.1,seed=123)
+  plot(data1$x,data1$y,xlab="X",ylab="Y")
+  data2 <- SimuWave(200,sigma=0.1,seed=123)
+  plot(data2$x,data2$y,col="red",xlab="X",ylab="Y")
+```
+
+We can use the l0tfABESSR and l0tfAMIASR functions for trend estimation on the above two types of data. It requires specifying the observed values $y$, the maximum number of detection knots, and the order. The specific trend estimates obtained are represented in the following figure:
+
+```{r}
+  AB1 <- l0tfABESSR(y=data1$y,kmax=20,q=0)
+  AM1 <- l0tfAMIASR(y=data1$y,kmax=20,q=0)
+  plot(data1$x,data1$y,xlab="X",ylab="Y")
+  lines(data1$x,AB1$yhat,col="red")
+  lines(data1$x,AM1$beta,col="blue")
+  
+  AB2 <- l0tfABESSR(y=data2$y,kmax=20,q=1)
+  AM2 <- l0tfAMIASR(y=data2$y,kmax=20,q=1)
+  plot(data2$x,data2$y,xlab="X",ylab="Y")
+  lines(data2$x,AB2$yhat,col="red")
+  lines(data2$x,AM2$beta,col="blue")
+```
+
+In the above estimated curves, the red line represents the ABESS algorithm, while the blue line represents the AMIAS algorithm. The process of generating segmented data and providing estimates is facilitated by the functions Simul0tfABESSR and Simul0tfAMIASR. Of course, for any observed values, we can obtain segmented estimates by specifying the order and the maximum number of detection knots, that is, by directly using the l0tfABESSR and l0tfAMIASR functions to estimate the observed values $y$.
+
+
+Finally, we use microbenchmark functions to compare the differences in computation time between the AMIAS and ABESS algorithms implemented with R functions and Rcpp functions.
+
+```{r}
+ set.seed(123)
+ tm1 <- microbenchmark::microbenchmark(
+   ABR = Simul0tfABESSR(sigma=0.1,dgm="Blocks",n=60),
+   ABC = Simul0tfABESSC(sigma=0.1,dgm="Blocks",n=60),
+   AMR = Simul0tfAMIASR(sigma=0.1,dgm="Blocks",n=60),
+   times = 30
+  )
+ print(summary(tm1)[,c(1,3,5,6)])
+ tm2 <- microbenchmark::microbenchmark(
+   ABR = Simul0tfABESSR(sigma=0.1,dgm="Wave",n=60),
+   ABC = Simul0tfABESSC(sigma=0.1,dgm="Wave",n=60),
+   AMR = Simul0tfAMIASR(sigma=0.1,dgm="Wave",n=60),
+   times = 30
+  )
+ print(summary(tm2)[,c(1,3,5,6)])
+```
